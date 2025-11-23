@@ -2,22 +2,25 @@ import numpy as np
 from numpy.typing import ArrayLike
 from simulator import RaceTrack
 
-def refine_points(points: np.ndarray, iterations: int = 5) -> np.ndarray:
+def refine_points(points: np.ndarray, iterations: int = 1) -> np.ndarray:
     """
     points: numpy array of shape (N, 2)
     iterations: number of times to replace points with midpoints
     
     Returns an array of shape (N-iterations, 2)
     """
-    pts = points.copy()
-
+    pts = points
     for _ in range(iterations):
-        # midpoint between consecutive pairs:
-        # mid[i] = (pts[i] + pts[i+1]) / 2
-        pts = (pts[:-1] + pts[1:]) / 2.0
-
+        new_pts = []
+        for i in range(len(pts) - 1):
+            p0 = pts[i]
+            p1 = pts[i + 1]
+            mid = (p0 + p1) / 2.0
+            new_pts.append(p0)
+            new_pts.append(mid)
+        new_pts.append(pts[-1])  # include last point
+        pts = np.array(new_pts)
     return pts
-
 
 # Low-level PID for steering + speed
 class PID:
