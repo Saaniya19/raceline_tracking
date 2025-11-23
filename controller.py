@@ -3,9 +3,7 @@ from numpy.typing import ArrayLike
 from simulator import RaceTrack
 
 
-# ================================
 # Low-level PID for steering + speed
-# ================================
 class PID:
     def __init__(self, kp, ki, kd, output_limits=None):
         self.kp = kp
@@ -32,18 +30,14 @@ class PID:
         return out
 
 
-# ================
 # Instantiate low-level PIDs
-# ================
 steer_pid = PID(kp=4.0, ki=0.0, kd=0.2, output_limits=(-2.0, 2.0))     # rad/s
 vel_pid   = PID(kp=1.5, ki=0.1, kd=0.0, output_limits=(-5.0, 5.0))     # m/s²
 
 
-# ================================================================
 # LOW-LEVEL CONTROLLER
 # Takes desired steering *angle* & desired speed
 # Produces steering *rate* (v_delta) & acceleration
-# ================================================================
 def lower_controller(state: ArrayLike, desired: ArrayLike, parameters: ArrayLike):
     """
     state = [sx, sy, φ, v, δ]
@@ -72,13 +66,11 @@ def lower_controller(state: ArrayLike, desired: ArrayLike, parameters: ArrayLike
 
 
 
-# ================================================================
 # HIGH-LEVEL CONTROLLER
 # Computes desired steering ANGLE and desired speed
-# ================================================================
-LOOKAHEAD = 5          # number of points ahead on the raceline
-BASE_SPEED = 20        # m/s target on straights
-TURN_SLOWDOWN = 8      # how much to reduce speed in curves
+LOOKAHEAD = 10          # number of points ahead on the raceline
+BASE_SPEED = 1000        # m/s target on straights
+TURN_SLOWDOWN = 990      # how much to reduce speed in curves
 
 
 def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) -> ArrayLike:
