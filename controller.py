@@ -13,16 +13,16 @@ class PID:
         self.prev_error = 0.0
         self.output_limits = output_limits
 
-    def update(self, error, dt=0.02):
+    def update(self, error, dt=0.1):   # simulator time_step is 0.1s
         # integrate
         self.integral += error * dt
 
         # derivative
         d = (error - self.prev_error) / dt
+        self.prev_error = error
 
         # PID output
         out = self.kp * error + self.ki * self.integral + self.kd * d
-        self.prev_error = error
 
         if self.output_limits is not None:
             out = np.clip(out, self.output_limits[0], self.output_limits[1])
@@ -30,55 +30,54 @@ class PID:
         return out
 
 
-# Instantiate low-level PIDs
-steer_pid = PID(kp=4.0, ki=0.0, kd=0.2, output_limits=(-2.0, 2.0))     # rad/s
-vel_pid   = PID(kp=1.5, ki=0.1, kd=0.0, output_limits=(-5.0, 5.0))     # m/s²
+# Instantiate low-level PIDs (same objects reused every call)
+steer_pid = PID(kp=4.0, ki=0.0, kd=0.2, output_limits=(-2.0, 2.0))   # rad/s
+vel_pid   = PID(kp=1.5, ki=0.1, kd=0.0, output_limits=(-5.0, 5.0))   # m/s²
 
 
-# LOW-LEVEL CONTROLLER
+# LOW-LEVEL CONTROLLER:
 # Takes desired steering *angle* & desired speed
 # Produces steering *rate* (v_delta) & acceleration
 def lower_controller(state: ArrayLike, desired: ArrayLike, parameters: ArrayLike):
     """
-    state = [sx, sy, φ, v, δ]
+    state   = [sx, sy, delta, v, phi]
     desired = [desired_steering_angle , desired_speed]
     """
-
     _, _, delta, v, phi = state
     desired_steer = desired[0]
     desired_speed = desired[1]
 
-    # Steering control → produce steering rate
+    # --- Steering rate control ---
     steer_error = desired_steer - delta
     v_delta = steer_pid.update(steer_error)
 
-    # Clip to physical limits
-    v_delta = np.clip(v_delta, parameters[7], parameters[9])  # steering vel limits
+    # Clip to physical steering-rate limits
+    v_delta = np.clip(v_delta, parameters[7], parameters[9])
 
-    # Velocity control → produce acceleration
+    # --- Velocity / acceleration control ---
     vel_error = desired_speed - v
     accel = vel_pid.update(vel_error)
 
-    # Clip to physical limits
-    accel = np.clip(accel, parameters[8], parameters[10])  # acceleration limits
+    # Clip to physical acceleration limits
+    accel = np.clip(accel, parameters[8], parameters[10])
 
     return np.array([v_delta, accel])
 
 
-
-# HIGH-LEVEL CONTROLLER
-# Computes desired steering ANGLE and desired speed
-LOOKAHEAD = 10          # number of points ahead on the raceline
-BASE_SPEED = 1000        # m/s target on straights
-TURN_SLOWDOWN = 990      # how much to reduce speed in curves
+# GLOBAL TUNING CONSTANTS (used only as defaults)
+BASE_SPEED = 35.0      # target speed on straights (m/s)
+MIN_SPEED  = 8.0       # do not crawl slower than this
+TURN_SLOWDOWN = 4.0    # speed reduction factor from curvature
 
 
 def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) -> ArrayLike:
     """
-    Produces desired steering angle and desired speed.
-    Then passes them to the low-level controller.
+    High-level controller:
+      - picks a lookahead target on centerline
+      - computes desired steering angle
+      - computes desired speed from curvature
+      - then calls lower_controller
     """
-
     sx, sy, delta, v, phi = state
 
     # ---- 1. Find closest point on reference path ----
@@ -86,35 +85,59 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
     pos = np.array([sx, sy])
     dists = np.linalg.norm(ref - pos, axis=1)
     idx = np.argmin(dists)
-
-    # ---- 2. Select lookahead target ----
     N = len(ref)
-    look_idx = (idx + LOOKAHEAD) % N
+
+    # ---- 2. Proper curvature estimate (angle change per distance) ----
+    prev = ref[(idx - 2) % N]
+    nextp = ref[(idx + 2) % N]
+
+    # headings of segments
+    heading_prev = np.arctan2(prev[1] - sy, prev[0] - sx)
+    heading_next = np.arctan2(nextp[1] - sy, nextp[0] - sx)
+    dtheta = np.arctan2(np.sin(heading_next - heading_prev),
+                        np.cos(heading_next - heading_prev))
+    ds = np.linalg.norm(nextp - prev)
+    curvature = abs(dtheta) / max(ds, 1e-3)   # units ~ 1/m, typically 0–0.3
+    # print("curvature:", curvature)
+
+    # ---- 3. Choose lookahead & base_speed based on curvature ----
+    if curvature > 0.15:          # very tight / hairpin
+        lookahead = 2
+        base_speed = 12.0
+    elif curvature > 0.07:        # medium turn
+        lookahead = 4
+        base_speed = 20.0
+    else:                         # gentle / straight
+        lookahead = 7
+        base_speed = BASE_SPEED
+
+    look_idx = (idx + lookahead) % N
     target = ref[look_idx]
 
-    # ---- 3. Compute desired steering ANGLE ----
+    # ---- 4. Compute desired steering ANGLE ----
     dx = target[0] - sx
     dy = target[1] - sy
     target_heading = np.arctan2(dy, dx)
 
     heading_error = target_heading - phi
-    heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))  # wrap
+    # wrap to [-pi, pi] FIRST
+    heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))
+    # no pre-clipping here; just let steering saturation & PID handle it
 
-    # Desired steering ANGLE is proportional to heading error
-    desired_steer = heading_error * 1.2
+    # Proportional steering from heading error
+    steer_gain = 1.2 if curvature < 0.07 else 1.8
+    if curvature > 0.15:
+        steer_gain = 2.2
+    desired_steer = steer_gain * heading_error
+
+    # Clip desired steering to physical +/- max steering angle
     desired_steer = np.clip(desired_steer, parameters[1], parameters[4])
 
-    # ---- 4. Compute desired SPEED based on curvature ----
-    prev = ref[(idx - 2) % N]
-    nextp = ref[(idx + 2) % N]
+    # ---- 5. Desired speed from curvature (no crazy scaling) ----
+    # Smooth slowdown: divide BASE_SPEED by (1 + TURN_SLOWDOWN * curvature)
+    desired_speed = base_speed / (1.0 + TURN_SLOWDOWN * curvature)
+    desired_speed = np.clip(desired_speed, MIN_SPEED, base_speed)
+    # print("desired_speed:", desired_speed, "desired_steer:", desired_steer)
 
-    angle_prev = np.arctan2(prev[1] - sy, prev[0] - sx)
-    angle_next = np.arctan2(nextp[1] - sy, nextp[0] - sx)
-    curvature = abs(np.arctan2(np.sin(angle_next - angle_prev),
-                               np.cos(angle_next - angle_prev)))
-
-    desired_speed = BASE_SPEED / (1 + TURN_SLOWDOWN * curvature)
-    desired_speed = np.clip(desired_speed, 5, BASE_SPEED)
-
-    # ---- 5. LOWER-LEVEL CONTROLLER ----
+    # ---- 6. Send to low-level controller ----
     return lower_controller(state, np.array([desired_steer, desired_speed]), parameters)
