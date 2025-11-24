@@ -132,7 +132,7 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
                         np.cos(heading_next - heading_prev))
     ds = np.linalg.norm(nextp - prev)
     curvature = abs(dtheta) / max(ds, 1e-3)   # units ~ 1/m, typically 0–0.3
-    # print("curvature:", curvature)
+    print("curvature:", curvature)
 
     # ---- 3. Choose lookahead & base_speed based on curvature ----
     if curvature > 0.15:          # very tight / hairpin
@@ -183,7 +183,10 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
     # Smooth slowdown: divide BASE_SPEED by (1 + TURN_SLOWDOWN * curvature)
     desired_speed = base_speed / (1.0 + TURN_SLOWDOWN * curvature)
     desired_speed = np.clip(desired_speed, MIN_SPEED, base_speed)
-    # print("desired_speed:", desired_speed, "desired_steer:", desired_steer)
+    print("desired_speed:", desired_speed, "desired_steer:", desired_steer)
+    racetrack.debug_desired_speed = float(desired_speed)
+    racetrack.debug_desired_steer = float(desired_steer)
+    racetrack.debug_curvature    = float(curvature)
 
     # ---- 6. Send to low-level controller ----
     return lower_controller(state, np.array([desired_steer, desired_speed]), parameters)

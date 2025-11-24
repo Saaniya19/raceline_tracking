@@ -108,6 +108,43 @@ class Simulator:
                 fontsize=8, color="Red"
             )
 
+            # Draw desired speed
+            if hasattr(self.rt, "debug_desired_speed"):
+                self.axis.text(
+                    self.car.state[0] + 195,
+                    self.car.state[1] + 140,
+                    "desired_speed: " + "{:.2f}".format(self.rt.debug_desired_speed),
+                    horizontalalignment="right",
+                    verticalalignment="top",
+                    fontsize=8,
+                    color="Green"
+                )
+
+            # Draw desired steer
+            if hasattr(self.rt, "debug_desired_steer"):
+                self.axis.text(
+                    self.car.state[0] + 195,
+                    self.car.state[1] + 125,
+                    "desired_steer: " + "{:.2f}".format(self.rt.debug_desired_steer),
+                    horizontalalignment="right",
+                    verticalalignment="top",
+                    fontsize=8,
+                    color="Purple"
+                )
+
+            # Draw curvature
+            if hasattr(self.rt, "debug_curvature"):
+                self.axis.text(
+                    self.car.state[0] + 195,
+                    self.car.state[1] + 110,
+                    "curvature: " + "{:.3f}".format(self.rt.debug_curvature),
+                    horizontalalignment="right",
+                    verticalalignment="top",
+                    fontsize=8,
+                    color="Blue"
+                )
+
+
             self.figure.canvas.draw()
             return True
 
