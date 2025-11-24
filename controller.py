@@ -31,8 +31,8 @@ class PID:
 
 
 # Instantiate low-level PIDs (same objects reused every call)
-steer_pid = PID(kp=4.0, ki=0.0, kd=0.2, output_limits=(-2.0, 2.0))   # rad/s
-vel_pid   = PID(kp=1.5, ki=0.1, kd=0.0, output_limits=(-5.0, 5.0))   # m/s²
+steer_pid = PID(kp=4.0, ki=0.0, kd=0.2, output_limits=(-3.0, 3.0))   # rad/s
+vel_pid   = PID(kp=1.5, ki=0.1, kd=0.0, output_limits=(-10.0, 10.0))   # m/s²
 
 
 # LOW-LEVEL CONTROLLER:
@@ -65,9 +65,9 @@ def lower_controller(state: ArrayLike, desired: ArrayLike, parameters: ArrayLike
 
 
 # GLOBAL TUNING CONSTANTS (used only as defaults)
-BASE_SPEED = 35.0      # target speed on straights (m/s)
-MIN_SPEED  = 8.0       # do not crawl slower than this
-TURN_SLOWDOWN = 4.0    # speed reduction factor from curvature
+BASE_SPEED = 80.0      # target speed on straights (m/s)
+MIN_SPEED  = 10.0       # do not crawl slower than this
+TURN_SLOWDOWN = 5.5    # speed reduction factor from curvature
 
 
 def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) -> ArrayLike:
@@ -103,10 +103,10 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
     # ---- 3. Choose lookahead & base_speed based on curvature ----
     if curvature > 0.15:          # very tight / hairpin
         lookahead = 2
-        base_speed = 12.0
+        base_speed = 16.0
     elif curvature > 0.07:        # medium turn
         lookahead = 4
-        base_speed = 20.0
+        base_speed = 28.0
     else:                         # gentle / straight
         lookahead = 7
         base_speed = BASE_SPEED
@@ -125,9 +125,13 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
     # no pre-clipping here; just let steering saturation & PID handle it
 
     # Proportional steering from heading error
-    steer_gain = 1.2 if curvature < 0.07 else 1.8
     if curvature > 0.15:
-        steer_gain = 2.2
+        steer_gain = 2.6
+    elif curvature > 0.07:
+        steer_gain = 2.0
+    else:
+        steer_gain = 1.4
+
     desired_steer = steer_gain * heading_error
 
     # Clip desired steering to physical +/- max steering angle
