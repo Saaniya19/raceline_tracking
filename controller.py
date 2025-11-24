@@ -2,29 +2,19 @@ import numpy as np
 from numpy.typing import ArrayLike
 from simulator import RaceTrack
 
-def refine_points(points: np.ndarray, iterations: int = 1) -> np.ndarray:
+def smooth_gain(curv, k_min, k_max, c):
     """
-    points: numpy array of shape (N, 2)
-    iterations: number of times to replace points with midpoints
-    
-    Returns an array of shape (N-iterations, 2)
+    Smooth exponential decay:
+    - curv = curvature (0 → straight, 0.2 → sharp turn)
+    - k_min = gain used in sharp turns
+    - k_max = gain used on straights
+    - c = how fast the gain transitions
     """
-    pts = points
-    for _ in range(iterations):
-        new_pts = []
-        for i in range(len(pts) - 1):
-            p0 = pts[i]
-            p1 = pts[i + 1]
-            mid = (p0 + p1) / 2.0
-            new_pts.append(p0)
-            new_pts.append(mid)
-        new_pts.append(pts[-1])  # include last point
-        pts = np.array(new_pts)
-    return pts
+    return k_min + (k_max - k_min) * np.exp(-c * curv)
 
-# Low-level PID for steering + speed
+
 class PID:
-    def __init__(self, kp, ki, kd, output_limits=None):
+    def __init__(self, kp, ki, kd, output_limits=None, derivative_alpha=0.25):
         self.kp = kp
         self.ki = ki
         self.kd = kd
@@ -32,25 +22,50 @@ class PID:
         self.prev_error = 0.0
         self.output_limits = output_limits
 
-    def update(self, error, dt=0.1):   # simulator time_step is 0.1s
-        # integrate
+        # Derivative smoothing
+        self.derivative_alpha = derivative_alpha
+        self.filtered_derivative = 0.0
+        self.first_update = True
+
+    def update(self, error, dt=0.1):
+        # Integral term
         self.integral += error * dt
 
-        # derivative
-        d = (error - self.prev_error) / dt
+        # Raw derivative
+        raw_derivative = (error - self.prev_error) / dt
+
+        # EMA low-pass filter for derivative
+        if self.first_update:
+            # initialize on first step
+            self.filtered_derivative = raw_derivative
+            self.first_update = False
+        else:
+            a = self.derivative_alpha
+            self.filtered_derivative = (
+                a * raw_derivative + (1 - a) * self.filtered_derivative
+            )
+
+        # Save for next iteration
         self.prev_error = error
 
-        # PID output
-        out = self.kp * error + self.ki * self.integral + self.kd * d
+        # PID output using filtered derivative
+        out = (
+            self.kp * error
+            + self.ki * self.integral
+            + self.kd * self.filtered_derivative
+        )
 
+        # Output saturation
         if self.output_limits is not None:
             out = np.clip(out, self.output_limits[0], self.output_limits[1])
 
         return out
 
 
+
 # Instantiate low-level PIDs (same objects reused every call)
-steer_pid = PID(kp=4.0, ki=0.0, kd=0.2, output_limits=(-3.0, 3.0))   # rad/s
+# steer_pid = PID(kp=4.0, ki=0.0, kd=0.2, output_limits=(-3.0, 3.0))   # rad/s
+steer_pid = PID(kp=2.4, ki=0.0, kd=0.55, output_limits=(-2.0, 2.0), derivative_alpha=0.20)
 vel_pid   = PID(kp=1.5, ki=0.1, kd=0.0, output_limits=(-10.0, 10.0))   # m/s²
 
 
@@ -84,7 +99,7 @@ def lower_controller(state: ArrayLike, desired: ArrayLike, parameters: ArrayLike
 
 
 # GLOBAL TUNING CONSTANTS (used only as defaults)
-BASE_SPEED = 80.0      # target speed on straights (m/s)
+BASE_SPEED = 170.0      # target speed on straights (m/s)
 MIN_SPEED  = 10.0       # do not crawl slower than this
 TURN_SLOWDOWN = 5.5    # speed reduction factor from curvature
 
@@ -101,7 +116,6 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
 
     # ---- 1. Find closest point on reference path ----
     ref = racetrack.centerline
-    ref = refine_points(ref)
     pos = np.array([sx, sy])
     dists = np.linalg.norm(ref - pos, axis=1)
     idx = np.argmin(dists)
@@ -123,16 +137,20 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
     # ---- 3. Choose lookahead & base_speed based on curvature ----
     if curvature > 0.15:          # very tight / hairpin
         lookahead = 2
-        base_speed = 16.0
+        base_speed = 46.0
     elif curvature > 0.07:        # medium turn
         lookahead = 4
-        base_speed = 28.0
+        base_speed = 98.0
     else:                         # gentle / straight
         lookahead = 7
         base_speed = BASE_SPEED
 
     look_idx = (idx + lookahead) % N
     target = ref[look_idx]
+
+    # steer_pid.kp = smooth_gain(curvature, 1.8, 4.5, 25)
+    # steer_pid.ki = smooth_gain(curvature, 0.00, 0.05, 25)
+    # steer_pid.kd = smooth_gain(curvature, 0.45, 0.10, 25)
 
     # ---- 4. Compute desired steering ANGLE ----
     dx = target[0] - sx
@@ -152,7 +170,11 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
     else:
         steer_gain = 1.4
 
-    desired_steer = steer_gain * heading_error
+    # steer_gain = smooth_gain(curvature, 1.2, 2.8, 18)
+
+    # desired_steer = steer_gain * heading_error
+    damp = 1.0 / (1.0 + 2.5 * abs(heading_error))
+    desired_steer = steer_gain * heading_error * damp
 
     # Clip desired steering to physical +/- max steering angle
     desired_steer = np.clip(desired_steer, parameters[1], parameters[4])
