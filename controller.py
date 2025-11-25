@@ -101,7 +101,7 @@ def lower_controller(state: ArrayLike, desired: ArrayLike, parameters: ArrayLike
 # GLOBAL TUNING CONSTANTS (used only as defaults)
 BASE_SPEED = 170.0      # target speed on straights (m/s)
 MIN_SPEED  = 10.0       # do not crawl slower than this
-TURN_SLOWDOWN = 5.5    # speed reduction factor from curvature
+TURN_SLOWDOWN = 3.5    # speed reduction factor from curvature
 
 
 def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) -> ArrayLike:
@@ -132,7 +132,7 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
                         np.cos(heading_next - heading_prev))
     ds = np.linalg.norm(nextp - prev)
     curvature = abs(dtheta) / max(ds, 1e-3)   # units ~ 1/m, typically 0–0.3
-    print("curvature:", curvature)
+    # print("curvature:", curvature)
 
     # ---- 3. Choose lookahead & base_speed based on curvature ----
     if curvature > 0.15:          # very tight / hairpin
@@ -183,7 +183,7 @@ def controller(state: ArrayLike, parameters: ArrayLike, racetrack: RaceTrack) ->
     # Smooth slowdown: divide BASE_SPEED by (1 + TURN_SLOWDOWN * curvature)
     desired_speed = base_speed / (1.0 + TURN_SLOWDOWN * curvature)
     desired_speed = np.clip(desired_speed, MIN_SPEED, base_speed)
-    print("desired_speed:", desired_speed, "desired_steer:", desired_steer)
+    # print("desired_speed:", desired_speed, "desired_steer:", desired_steer)
     racetrack.debug_desired_speed = float(desired_speed)
     racetrack.debug_desired_steer = float(desired_steer)
     racetrack.debug_curvature    = float(curvature)
